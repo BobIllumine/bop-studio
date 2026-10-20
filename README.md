@@ -71,7 +71,9 @@ For authentik in containers, run the whole stack from bop-dataset-gen:
 ## Deployment
 
 The image serves the built app with Caddy and proxies `/api` to the server, so
-the browser sees one origin:
+the browser sees one origin. Releases are published to GitHub Packages as
+`ghcr.io/bobillumine/bop-studio:<version>` (linux/amd64 and linux/arm64), or
+build it yourself:
 
 ```text
 docker build -t bop-studio .
