@@ -1,0 +1,35 @@
+# The studio next to a bop-server built from the bop-dataset-gen repository
+# (`docker build -f deploy/Dockerfile -t bop-server .` there).
+#
+#   docker compose -f deploy/compose.example.yaml up -d
+#   open http://localhost:3000
+
+services:
+  bop-studio:
+    build: ..
+    image: bop-studio:latest
+    ports:
+      - "127.0.0.1:3000:8080"
+    environment:
+      BOP_API_UPSTREAM: bop-server:8080
+    depends_on:
+      - bop-server
+
+  bop-server:
+    image: bop-server:latest
+    # SQLite and a local directory in the volume; see bop-dataset-gen's
+    # deploy/compose.yaml for PostgreSQL, S3 (presigned export links) and
+    # authentik sign-in.
+    environment:
+      # Reached only through the studio's proxy here, so no credentials are
+      # required; set BOP_API_TOKEN or BOP_OIDC_* before exposing it further.
+      BOP_ALLOW_ANONYMOUS: ${BOP_ALLOW_ANONYMOUS:-true}
+      BOP_API_TOKEN: ${BOP_API_TOKEN:-}
+      BOP_OIDC_ISSUER: ${BOP_OIDC_ISSUER:-}
+      BOP_OIDC_CLIENT_ID: ${BOP_OIDC_CLIENT_ID:-}
+      BOP_OIDC_GROUPS: ${BOP_OIDC_GROUPS:-}
+    volumes:
+      - bop-data:/var/lib/bop
+
+volumes:
+  bop-data:

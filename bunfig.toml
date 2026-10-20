@@ -1,0 +1,6 @@
+[install]
+# Supply-chain guard: only install versions published at least 3 days ago,
+# so a hijacked release is usually caught and pulled before it lands here.
+minimumReleaseAge = 259200
+# Never save `^` ranges; package.json pins exact versions.
+exact = true

@@ -1,0 +1,34 @@
+# Serves the built studio and proxies the API, so the browser sees one origin.
+{
+	admin off
+}
+
+:8080 {
+	encode zstd gzip
+
+	header -Server
+
+	@api path /api/* /healthz
+	handle @api {
+		reverse_proxy {$BOP_API_UPSTREAM} {
+			# Job events are server-sent; forward them as they arrive.
+			flush_interval -1
+		}
+	}
+
+	handle {
+		# Scripts only from this origin. connect-src also admits the sign-in
+		# provider and servers chosen in Server settings: BOP_CONNECT_SRC,
+		# default any https origin.
+		header {
+			Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; worker-src 'self' blob:; connect-src 'self' {$BOP_CONNECT_SRC:https:}; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+			X-Content-Type-Options nosniff
+			Referrer-Policy strict-origin-when-cross-origin
+			Permissions-Policy "camera=(), microphone=(), geolocation=()"
+			Cross-Origin-Opener-Policy same-origin
+		}
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}
