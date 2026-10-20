@@ -1,7 +1,7 @@
 {
   "name": "bop-studio",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Web UI for bop-server: scene setup, asset library, jobs and exports.",
   "license": "GPL-3.0-or-later",
