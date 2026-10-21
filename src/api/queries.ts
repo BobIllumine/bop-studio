@@ -7,6 +7,7 @@ import {
   apiUrl,
   authHeaders,
   encodePath,
+  sessionHeaders,
   unwrap,
   type ExportFormat,
   type Job,
@@ -131,7 +132,7 @@ export function useJobConfig(id: string | undefined) {
   return useQuery({
     queryKey: ["job-config", server, id],
     queryFn: async () => {
-      const response = await fetch(apiUrl(`/api/v1/jobs/${encodeURIComponent(id!)}/config`), { headers: authHeaders() });
+      const response = await fetch(apiUrl(`/api/v1/jobs/${encodeURIComponent(id!)}/config`), { headers: await sessionHeaders() });
       if (!response.ok) throw new ApiError(`${response.status} ${response.statusText}`, response.status);
       return response.text();
     },
@@ -193,7 +194,7 @@ export function useJobEvents(id: string | undefined): TimedEvent[] {
     const controller = new AbortController();
     (async () => {
       const response = await fetch(apiUrl(`/api/v1/jobs/${encodeURIComponent(id)}/events`), {
-        headers: { ...authHeaders(), accept: "text/event-stream" },
+        headers: { ...(await sessionHeaders()), accept: "text/event-stream" },
         signal: controller.signal,
       });
       if (!response.ok || !response.body) return;

@@ -11,6 +11,12 @@ All notable changes to this project are documented here. The format follows
 - **Container image.** Published to GitHub Packages as
   `ghcr.io/bobillumine/bop-studio` for linux/amd64 and linux/arm64.
 
+### Fixed
+
+- **Model previews failed after a reload.** Requests made while the page was
+  loading went out before the sign-in was restored and got 401, and mesh
+  previews kept that error. Requests now wait for the session first.
+
 ## 0.1.1
 
 ### Changed
