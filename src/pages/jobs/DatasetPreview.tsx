@@ -39,7 +39,7 @@ async function decode(channel: Channel, bytes: ArrayBuffer): Promise<Frame> {
       return { width: image.width, height: image.height, image };
     }
     case "depth": {
-      const depth = decodeDepthExr(bytes);
+      const depth = await decodeDepthExr(bytes);
       return { ...depth, image: new ImageData(depthRgba(depth), depth.width, depth.height) };
     }
     case "instance": {

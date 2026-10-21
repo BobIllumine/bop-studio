@@ -2,8 +2,8 @@
  * Reading a generated dataset in the browser: which frames a job stored, and
  * decoders for the two channels browsers cannot show as they are.
  *
- * Depth is a single-channel float `Z` OpenEXR (tiled or scanline, RLE or
- * uncompressed, as the `exr` crate writes it); instance labels are 16-bit
+ * Depth is a single-channel float `Z` OpenEXR (scanline ZIP as bop-server
+ * writes it; tiled RLE in older datasets; or uncompressed); instance labels are 16-bit
  * grayscale PNG, which `<img>` would reduce to 8 bits.
  */
 
@@ -143,7 +143,7 @@ export async function decodeGray16Png(buffer: ArrayBuffer): Promise<LabelImage> 
   return { width, height, labels };
 }
 
-/** OpenEXR RLE: run-length decode, undo the byte predictor, then re-interleave the two halves. */
+/** OpenEXR RLE: run-length decode, then undo the shared preprocessing. */
 function exrRle(data: Uint8Array, size: number): Uint8Array {
   const t = new Uint8Array(size);
   let o = 0;
@@ -159,6 +159,19 @@ function exrRle(data: Uint8Array, size: number): Uint8Array {
     }
   }
   if (o !== size) throw new Error("EXR RLE block has the wrong length");
+  return unpredict(t);
+}
+
+/** OpenEXR ZIP and ZIPS: zlib-inflate, then undo the shared preprocessing. */
+async function exrZip(data: Uint8Array, size: number): Promise<Uint8Array> {
+  const t = await inflate(new Uint8Array(data));
+  if (t.length !== size) throw new Error("EXR ZIP block has the wrong length");
+  return unpredict(t);
+}
+
+/** Undoes the byte predictor RLE and ZIP blocks share, then re-interleaves the two halves. */
+function unpredict(t: Uint8Array): Uint8Array {
+  const size = t.length;
   for (let i = 1; i < size; i++) t[i] = (t[i - 1]! + t[i]! - 128) & 0xff;
   const out = new Uint8Array(size);
   const half = (size + 1) >> 1;
@@ -166,8 +179,11 @@ function exrRle(data: Uint8Array, size: number): Uint8Array {
   return out;
 }
 
+/** Scanlines per block of a scanline file, by compression: none, RLE, ZIPS, ZIP. */
+const SCANLINES_PER_BLOCK: Record<number, number> = { 0: 1, 1: 1, 2: 1, 3: 16 };
+
 /** Decodes the single-channel float depth EXR the dataset stores. */
-export function decodeDepthExr(buffer: ArrayBuffer): DepthImage {
+export async function decodeDepthExr(buffer: ArrayBuffer): Promise<DepthImage> {
   const view = new DataView(buffer);
   const bytes = new Uint8Array(buffer);
   if (view.getUint32(0, true) !== 20000630) throw new Error("not an OpenEXR file");
@@ -212,14 +228,15 @@ export function decodeDepthExr(buffer: ArrayBuffer): DepthImage {
   if (channels.length !== 1 || channels[0]!.type !== 2) {
     throw new Error(`expected one float channel, found ${channels.map((c) => c.name).join(", ") || "none"}`);
   }
-  if (compression !== 0 && compression !== 1) throw new Error(`unsupported EXR compression ${compression}`);
+  const lines = SCANLINES_PER_BLOCK[compression];
+  if (lines === undefined) throw new Error(`unsupported EXR compression ${compression}`);
 
   const [x0, y0, x1, y1] = window as [number, number, number, number];
   const width = x1 - x0 + 1;
   const height = y1 - y0 + 1;
   const metres = new Float32Array(width * height);
-  const [tw, th] = tiled ? (tile as [number, number]) : [width, 1];
-  const chunks = tiled ? Math.ceil(width / tw) * Math.ceil(height / th) : height;
+  const [tw, th] = tiled ? (tile as [number, number]) : [width, lines];
+  const chunks = Math.ceil(width / tw) * Math.ceil(height / th);
   const table = offset;
   for (let chunk = 0; chunk < chunks; chunk++) {
     let at = Number(view.getBigUint64(table + 8 * chunk, true));
@@ -239,7 +256,8 @@ export function decodeDepthExr(buffer: ArrayBuffer): DepthImage {
     const w = Math.min(tw, width - px);
     const h = Math.min(th, height - py);
     const size = w * h * 4;
-    const block = compression === 1 && packed < size ? exrRle(data, size) : data;
+    // A block that would not shrink is stored as it is.
+    const block = packed >= size || compression === 0 ? data : compression === 1 ? exrRle(data, size) : await exrZip(data, size);
     const floats = new DataView(block.buffer, block.byteOffset, block.byteLength);
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) metres[(py + y) * width + px + x] = floats.getFloat32((y * w + x) * 4, true);

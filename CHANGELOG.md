@@ -10,6 +10,9 @@ All notable changes to this project are documented here. The format follows
 
 - **Container image.** Published to GitHub Packages as
   `ghcr.io/bobillumine/bop-studio` for linux/amd64 and linux/arm64.
+- **ZIP depth previews.** The dataset preview reads ZIP- and ZIPS-compressed
+  depth EXRs, which bop-server now writes, as well as the RLE ones of older
+  datasets.
 
 ### Fixed
 

@@ -58,15 +58,31 @@ describe("decodeGray16Png", () => {
 });
 
 describe("decodeDepthExr", () => {
-  it("reads a tiled RLE depth frame, partial edge tiles included", () => {
-    // 70×20 frame written by bop-dataset: depth = 0.5 + 0.01·x + 0.001·y metres, 0 where x < 5.
-    const depth = decodeDepthExr(fixture("depth.exr"));
+  // 70×20 frames written by bop-dataset: depth = 0.5 + 0.01·x + 0.001·y metres, 0 where x < 5.
+  const expectFixture = async (name: string) => {
+    const depth = await decodeDepthExr(fixture(name));
     expect([depth.width, depth.height]).toEqual([70, 20]);
-    for (const [x, y] of [[0, 0], [4, 19], [5, 0], [63, 7], [64, 7], [69, 19]] as const) {
+    for (const [x, y] of [[0, 0], [4, 19], [5, 0], [63, 7], [64, 7], [69, 15], [69, 16], [69, 19]] as const) {
       const expected = x < 5 ? 0 : 0.5 + 0.01 * x + 0.001 * y;
       expect(depth.metres[y * 70 + x]).toBeCloseTo(expected, 6);
     }
     expect(depthRange(depth)[0]).toBeCloseTo(0.55, 6);
+  };
+
+  it("reads a scanline ZIP depth frame, a partial last block included", async () => {
+    await expectFixture("depth-zip.exr");
+  });
+
+  it("reads a tiled RLE depth frame from older datasets, partial edge tiles included", async () => {
+    await expectFixture("depth.exr");
+  });
+
+  it("rejects compressions it cannot decode", async () => {
+    const bytes = new Uint8Array(fixture("depth-zip.exr"));
+    // The attribute's name, its type name, its 4-byte size, then the value.
+    const at = Buffer.from(bytes).indexOf("compression\0compression\0") + 28;
+    bytes[at] = 4; // PIZ
+    await expect(decodeDepthExr(bytes.buffer)).rejects.toThrow("unsupported EXR compression 4");
   });
 });
 
