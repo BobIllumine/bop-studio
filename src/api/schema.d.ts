@@ -369,7 +369,7 @@ export interface components {
         Job: {
             /**
              * @description A cancel was requested while the job is running; it stops once its
-             *     in-flight scenes commit. Not stored: only the running server knows.
+             *     in-flight scenes commit.
              */
             cancel_requested: boolean;
             /**
