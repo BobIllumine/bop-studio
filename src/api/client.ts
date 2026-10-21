@@ -1,7 +1,7 @@
 import createClient, { type Middleware } from "openapi-fetch";
 
 import { useSettings } from "../state/settings";
-import { accessToken } from "./auth";
+import { accessToken, restoreSession } from "./auth";
 import type { components, paths } from "./schema";
 
 export type Job = components["schemas"]["Job"];
@@ -33,9 +33,19 @@ export function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+/**
+ * [`authHeaders`] once this tab's session has been restored, so requests made
+ * while the page loads carry the token too. If the server cannot say how to
+ * sign in, the request goes out anyway and the server answers with its error.
+ */
+export async function sessionHeaders(): Promise<Record<string, string>> {
+  await restoreSession(useSettings.getState().apiBase).catch(() => undefined);
+  return authHeaders();
+}
+
 const auth: Middleware = {
-  onRequest({ request }) {
-    for (const [name, value] of Object.entries(authHeaders())) {
+  async onRequest({ request }) {
+    for (const [name, value] of Object.entries(await sessionHeaders())) {
       request.headers.set(name, value);
     }
     return request;
@@ -76,7 +86,7 @@ export function unwrap<T>(result: { data?: T; error?: unknown; response: Respons
 
 /** Fetches raw bytes from an API path with the configured credentials. */
 export async function fetchBytes(path: string, signal?: AbortSignal): Promise<ArrayBuffer> {
-  const response = await fetch(apiUrl(path), { headers: authHeaders(), signal });
+  const response = await fetch(apiUrl(path), { headers: await sessionHeaders(), signal });
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;
     try {

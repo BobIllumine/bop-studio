@@ -69,20 +69,36 @@ async function fetchAuthInfo(apiBase: string): Promise<AuthInfo> {
   return (await response.json()) as AuthInfo;
 }
 
+const restoring = new Map<string, Promise<AuthInfo>>();
+
 /**
- * How the configured server wants to be signed in to. Restores an earlier
- * session for its provider from this tab, if there is one.
+ * How `apiBase` wants to be signed in to, after restoring an earlier session
+ * for its provider from this tab, if there is one. Runs once per server, so
+ * requests made while the page loads can wait for it instead of going out
+ * without a token.
  */
-export function useAuthInfo() {
-  const apiBase = useSettings((s) => s.apiBase);
-  return useQuery({
-    queryKey: ["auth", apiBase],
-    queryFn: async () => {
+export function restoreSession(apiBase: string): Promise<AuthInfo> {
+  let pending = restoring.get(apiBase);
+  if (!pending) {
+    pending = (async () => {
       const info = await fetchAuthInfo(apiBase);
       const user = info.oidc ? await manager(info.oidc).getUser() : null;
       useSession.getState().setUser(user && !user.expired ? user : null);
       return info;
-    },
+    })();
+    // A failed attempt is not kept, so the next request tries again.
+    pending.catch(() => restoring.delete(apiBase));
+    restoring.set(apiBase, pending);
+  }
+  return pending;
+}
+
+/** How the configured server wants to be signed in to; see [`restoreSession`]. */
+export function useAuthInfo() {
+  const apiBase = useSettings((s) => s.apiBase);
+  return useQuery({
+    queryKey: ["auth", apiBase],
+    queryFn: () => restoreSession(apiBase),
     staleTime: Infinity,
     retry: false,
   });
