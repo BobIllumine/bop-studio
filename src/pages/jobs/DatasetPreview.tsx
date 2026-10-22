@@ -6,7 +6,6 @@ import {
   CHANNEL_FILE,
   decodeDepthExr,
   decodeGray16Png,
-  depthRgba,
   indexScenes,
   labelRgba,
   type Channel,
@@ -24,24 +23,32 @@ const CHANNELS: { value: Channel; label: string }[] = [
   { value: "instance", label: "Instances" },
 ];
 
-interface Frame {
+/** Longest edge of a preview in the scene grid and in a scene's own view. */
+const GRID_SIZE = 512;
+const DETAIL_SIZE = 1024;
+
+/** What a canvas draws. */
+interface Picture {
   width: number;
   height: number;
   image: ImageBitmap | ImageData;
-  metres?: Float32Array;
-  labels?: Uint16Array;
 }
 
-async function decode(channel: Channel, bytes: ArrayBuffer): Promise<Frame> {
+/** A stored frame's exact values, at its full resolution. */
+interface Values {
+  width: number;
+  height: number;
+  metres?: Float32Array;
+  labels?: Uint16Array;
+  image?: ImageData;
+}
+
+async function decodeValues(channel: Channel, bytes: ArrayBuffer): Promise<Values> {
   switch (channel) {
-    case "rgb": {
-      const image = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
-      return { width: image.width, height: image.height, image };
-    }
-    case "depth": {
-      const depth = await decodeDepthExr(bytes);
-      return { ...depth, image: new ImageData(depthRgba(depth), depth.width, depth.height) };
-    }
+    case "rgb":
+      throw new Error("RGB frames have no values");
+    case "depth":
+      return decodeDepthExr(bytes);
     case "instance": {
       const labels = await decodeGray16Png(bytes);
       return { ...labels, image: new ImageData(labelRgba(labels), labels.width, labels.height) };
@@ -49,15 +56,40 @@ async function decode(channel: Channel, bytes: ArrayBuffer): Promise<Frame> {
   }
 }
 
-function useFrame(job: string, path: string | undefined, channel: Channel) {
+/** A stored frame file, decoded; large for depth, so loaded only when `enabled`. */
+function useValues(job: string, path: string | undefined, channel: Channel, enabled: boolean) {
   const server = useSettings((s) => s.apiBase);
   return useQuery({
     queryKey: ["frame", server, job, path],
-    queryFn: async ({ signal }) => decode(channel, await fetchBytes(`/api/v1/jobs/${job}/files/${encodePath(path!)}`, signal)),
-    enabled: Boolean(path),
+    queryFn: async ({ signal }) => decodeValues(channel, await fetchBytes(`/api/v1/jobs/${job}/files/${encodePath(path!)}`, signal)),
+    enabled: Boolean(path) && channel !== "rgb" && enabled,
     staleTime: Infinity,
     gcTime: 60_000,
   });
+}
+
+/**
+ * What to draw for a frame: the server's small coloured preview for RGB and
+ * depth, and the stored instance labels, which are smaller than their preview
+ * and are what hovering reads anyway.
+ */
+function usePicture(job: string, path: string | undefined, channel: Channel, size: number) {
+  const server = useSettings((s) => s.apiBase);
+  const values = useValues(job, path, channel, channel === "instance");
+  const preview = useQuery({
+    queryKey: ["preview", server, job, path, size],
+    queryFn: async ({ signal }): Promise<Picture> => {
+      const bytes = await fetchBytes(`/api/v1/jobs/${job}/previews/${encodePath(path!)}?size=${size}`, signal);
+      const image = await createImageBitmap(new Blob([bytes]));
+      return { width: image.width, height: image.height, image };
+    },
+    enabled: Boolean(path) && channel !== "instance",
+    staleTime: Infinity,
+    gcTime: 10 * 60_000,
+  });
+  if (channel !== "instance") return preview;
+  const image = values.data?.image;
+  return { ...values, data: values.data && image ? { width: values.data.width, height: values.data.height, image } : undefined };
 }
 
 interface Instance {
@@ -80,32 +112,34 @@ function useSceneInstances(job: string, path: string | undefined) {
   });
 }
 
-/** One decoded frame drawn to a canvas, reporting the pixel under the pointer. */
+/** One frame drawn to a canvas, reporting where the pointer is as fractions of its width and height. */
 function FrameCanvas({
   job,
   path,
   channel,
+  size,
   onHover,
 }: {
   job: string;
   path: string | undefined;
   channel: Channel;
-  onHover?: (pixel: { x: number; y: number; frame: Frame } | null) => void;
+  size: number;
+  onHover?: (point: { x: number; y: number } | null) => void;
 }) {
-  const frame = useFrame(job, path, channel);
+  const picture = usePicture(job, path, channel, size);
   const canvas = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
-    const data = frame.data;
+    const data = picture.data;
     const context = canvas.current?.getContext("2d");
     if (!data || !context) return;
     if (data.image instanceof ImageData) context.putImageData(data.image, 0, 0);
     else context.drawImage(data.image, 0, 0);
-  }, [frame.data]);
+  }, [picture.data]);
 
   if (!path) return <div className="frame-msg">No {CHANNEL_FILE[channel]} stored</div>;
-  if (frame.error) return <div className="frame-msg error">{frame.error.message}</div>;
-  if (!frame.data) return <div className="frame-msg">Loading…</div>;
-  const { width, height } = frame.data;
+  if (picture.error) return <div className="frame-msg error">{picture.error.message}</div>;
+  if (!picture.data) return <div className="frame-msg">Loading…</div>;
+  const { width, height } = picture.data;
   return (
     <canvas
       ref={canvas}
@@ -115,9 +149,7 @@ function FrameCanvas({
       onMouseMove={(event) => {
         if (!onHover) return;
         const box = event.currentTarget.getBoundingClientRect();
-        const x = Math.min(width - 1, Math.floor(((event.clientX - box.left) / box.width) * width));
-        const y = Math.min(height - 1, Math.floor(((event.clientY - box.top) / box.height) * height));
-        onHover({ x, y, frame: frame.data });
+        onHover({ x: (event.clientX - box.left) / box.width, y: (event.clientY - box.top) / box.height });
       }}
       onMouseLeave={() => onHover?.(null)}
     />
@@ -191,7 +223,12 @@ export function DatasetPreview({ job, files }: { job: string; files: StoredObjec
               }}
             >
               <div className="frame-img">
-                <FrameCanvas job={job} path={scene.frames.find((f) => f.camera === shownCamera)?.paths[channel]} channel={channel} />
+                <FrameCanvas
+                  job={job}
+                  path={scene.frames.find((f) => f.camera === shownCamera)?.paths[channel]}
+                  channel={channel}
+                  size={GRID_SIZE}
+                />
               </div>
               <span className="tile-body row mono" style={{ flexDirection: "row", fontSize: 12 }}>
                 <span>Scene {scene.scene}</span>
@@ -226,40 +263,84 @@ function Pager({ label, previous, next }: { label: string; previous?: () => void
 /** Every camera of one scene, with what lies under the pointer. */
 function SceneFrames({ job, scene, channel }: { job: string; scene: SceneFiles; channel: Channel }) {
   const instances = useSceneInstances(job, scene.metadata);
-  const [hover, setHover] = useState<{ camera: number; text: string } | null>(null);
+  return (
+    <div className="frames large">
+      {scene.frames.map((frame) => (
+        <CameraFrame
+          key={frame.camera}
+          job={job}
+          camera={frame.camera}
+          path={frame.paths[channel]}
+          channel={channel}
+          instances={instances.data}
+        />
+      ))}
+    </div>
+  );
+}
 
-  const describe = (x: number, y: number, frame: Frame) => {
+/** One camera's frame; its stored values load the first time the pointer is over it. */
+function CameraFrame({
+  job,
+  camera,
+  path,
+  channel,
+  instances,
+}: {
+  job: string;
+  camera: number;
+  path: string | undefined;
+  channel: Channel;
+  instances: Map<number, Instance> | undefined;
+}) {
+  const [point, setPoint] = useState<{ x: number; y: number } | null>(null);
+  const [wanted, setWanted] = useState(false);
+  const values = useValues(job, path, channel, wanted);
+
+  const describe = (frame: Values, point: { x: number; y: number }) => {
+    const x = Math.min(frame.width - 1, Math.floor(point.x * frame.width));
+    const y = Math.min(frame.height - 1, Math.floor(point.y * frame.height));
     const i = y * frame.width + x;
     const parts = [`x ${x}, y ${y}`];
     if (frame.metres) parts.push(frame.metres[i]! > 0 ? `depth ${frame.metres[i]!.toFixed(4)} m` : "background");
     if (frame.labels) {
       const id = frame.labels[i]!;
-      const instance = instances.data?.get(id);
+      const instance = instances?.get(id);
       parts.push(id === 0 ? "background" : instance ? `instance ${id} · ${instance.asset_id} in ${instance.bin_id}` : `instance ${id}`);
     }
     return parts.join("  ·  ");
   };
+  const caption =
+    channel === "rgb"
+      ? ""
+      : !point
+        ? "hover for values"
+        : values.error
+          ? values.error.message
+          : values.data
+            ? describe(values.data, point)
+            : "loading values…";
 
   return (
-    <div className="frames large">
-      {scene.frames.map((frame) => (
-        <figure key={frame.camera} className="tile" style={{ margin: 0, cursor: "default" }}>
-          <div className="frame-img">
-            <FrameCanvas
-              job={job}
-              path={frame.paths[channel]}
-              channel={channel}
-              onHover={(pixel) => setHover(pixel && { camera: frame.camera, text: describe(pixel.x, pixel.y, pixel.frame) })}
-            />
-          </div>
-          <figcaption className="tile-body row mono" style={{ flexDirection: "row", fontSize: 12 }}>
-            <span>Camera {frame.camera}</span>
-            <span className="muted" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {hover?.camera === frame.camera ? hover.text : channel === "rgb" ? "" : "hover for values"}
-            </span>
-          </figcaption>
-        </figure>
-      ))}
-    </div>
+    <figure className="tile" style={{ margin: 0, cursor: "default" }}>
+      <div className="frame-img">
+        <FrameCanvas
+          job={job}
+          path={path}
+          channel={channel}
+          size={DETAIL_SIZE}
+          onHover={(next) => {
+            setPoint(next);
+            if (next) setWanted(true);
+          }}
+        />
+      </div>
+      <figcaption className="tile-body row mono" style={{ flexDirection: "row", fontSize: 12 }}>
+        <span>Camera {camera}</span>
+        <span className="muted" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {caption}
+        </span>
+      </figcaption>
+    </figure>
   );
 }

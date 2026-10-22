@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Changed
+
+- **Faster dataset previews.** The preview shows the server's small coloured
+  images of RGB and depth frames (bop-server 0.1.3 or later) instead of
+  downloading and decoding the stored files: about a tenth of the bytes. A
+  stored depth file is fetched only when you hover a scene's frame for exact
+  values, and the browser keeps what it has fetched.
+
 ## 0.1.2
 
 ### Added

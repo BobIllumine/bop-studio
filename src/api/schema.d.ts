@@ -254,6 +254,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/jobs/{id}/previews/{path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Downloads a small image of a stored frame: its `rgb.png`, `depth.exr`, or
+         *     `instance.png` scaled to fit `size`, with depth and instance IDs coloured
+         *     as the studio colours them. RGB and depth previews are JPEG, instance
+         *     previews PNG.
+         */
+        get: operations["get_job_preview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/jobs/{id}/resume": {
         parameters: {
             query?: never;
@@ -1119,6 +1141,58 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    get_job_preview: {
+        parameters: {
+            query?: {
+                /** @description Longest edge in pixels, 16 to 4096; default 512. A smaller frame keeps its size. */
+                size?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Job identifier. */
+                id: string;
+                /** @description The frame file's path as `/files` lists it. */
+                path: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The preview. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/jpeg": number[];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
